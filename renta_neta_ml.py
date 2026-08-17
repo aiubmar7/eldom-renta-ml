@@ -212,11 +212,50 @@ def parse_dac_nc(f):
 
 
 # ---------------------------------------------------------------------------
-# 7) Factura FLEX Distrilogic -> total (con IVA), neto (sin IVA)
+# 7) FLEX Distrilogic -> total (con IVA), neto (sin IVA)
+#    Acepta la factura PDF ("TOTAL A PAGAR") o el reporte de servicios .xlsx
+#    (ELDOM_SERVICIOS_..._<Mes>_<Año>): envíos + almacenaje pallet, ambos netos.
 # ---------------------------------------------------------------------------
+def parse_flex_servicios(f):
+    """Reporte de servicios FLEX (.xlsx). Envíos = suma de 'Importe Comercial'
+    de los renglones de servicio (filas con Estado). Almacenaje = suma de las
+    celdas numéricas de las filas que mencionan 'pallet'/'almacenaje'. Ambos son
+    netos -> total con IVA (×1,22)."""
+    f.seek(0)
+    xls = pd.ExcelFile(f)
+    hoja = xls.sheet_names[0]
+    df = pd.read_excel(xls, sheet_name=hoja, header=1)
+
+    # Envíos: renglones de servicio reales (tienen Estado); excluye filas de total/pallet
+    envios = 0.0
+    col_imp = next((c for c in df.columns if "Importe Comercial" in str(c)), None)
+    if col_imp is not None and "Estado" in df.columns:
+        mask = df["Estado"].notna()
+        envios = pd.to_numeric(df.loc[mask, col_imp], errors="coerce").fillna(0).sum()
+
+    # Almacenaje pallet: filas que mencionan 'pallet'/'almacen'; sumo sus celdas numéricas
+    pallet = 0.0
+    raw = pd.read_excel(xls, sheet_name=hoja, header=None)
+    for _, row in raw.iterrows():
+        cells = list(row.tolist())
+        if any(isinstance(c, str) and re.search(r"pallet|almacen", c, re.I) for c in cells):
+            for c in cells:
+                if isinstance(c, (int, float)) and not isinstance(c, bool) and pd.notna(c):
+                    pallet += float(c)
+
+    neto = round(float(envios) + float(pallet), 2)
+    total = round(neto * (1 + IVA_RATE), 2)
+    return dict(total=total, neto=neto,
+                envios=round(float(envios), 2), pallet=round(float(pallet), 2))
+
+
 def parse_flex(f):
     if f is None:
-        return dict(total=0.0, neto=0.0)
+        return dict(total=0.0, neto=0.0, envios=0.0, pallet=0.0)
+    name = (getattr(f, "name", "") or "").lower()
+    if name.endswith((".xlsx", ".xls")):
+        return parse_flex_servicios(f)
+    # Factura PDF de Distrilogic
     text = _pdf_text(f)
     total = neto = 0.0
     m = re.search(r"TOTAL A PAGAR\s*\n?\s*(?:UYU)?\s*([\d.,]+)", text)
@@ -229,7 +268,7 @@ def parse_flex(f):
         neto = parse_amount(m2.group(1))
     if not neto and total:
         neto = round(total / (1 + IVA_RATE), 2)
-    return dict(total=round(total, 2), neto=round(neto, 2))
+    return dict(total=round(total, 2), neto=round(neto, 2), envios=0.0, pallet=0.0)
 
 
 # ===========================================================================
@@ -570,7 +609,7 @@ with st.expander("¿Qué archivo va en cada casillero?"):
 - **Facturación ML** y **Notas de Crédito ML** (`.xlsx`): reportes de facturación de MercadoLibre. De ahí salen comisión, envíos ME2/Colecta, publicidad, asesoría, etc.
 - **Costeo FacturApp – Facturas** y **– Notas de Crédito** (`.pdf`): costeo de FacturApp **filtrado a medio de pago M LIBRE**. De ahí salen la venta y el costo del producto de ML.
 - **DAC Facturación** y **DAC Nota de Crédito** (`.pdf`): flete ME1 por cuenta corriente y su bonificación del 20%.
-- **FLEX Distrilogic** (`.pdf`): factura de logística FLEX.
+- **FLEX** (`.pdf` o `.xlsx`): factura de Distrilogic (`.pdf`), o el reporte de servicios `ELDOM_SERVICIOS_..._<Mes>_<Año>.xlsx` — en ese caso calcula solo **envíos + almacenaje pallet**, ambos ×1,22.
 
 **Canal físico (tienda)**
 - **Costeo – TODOS los métodos** (`.pdf`): costeo de FacturApp **sin filtrar por medio de pago**. Trae costo y venta por documento.
@@ -608,9 +647,9 @@ with c2:
         help="Buscá el archivo:  Factura-NC_<número>.pdf  (nota de crédito / bonificación mensual de DAC)")
     st.subheader("Logística FLEX")
     flex_f = st.file_uploader(
-        "Distrilogic – Factura (.pdf)", type=["pdf"], key="flexf",
-        help="Factura de Distrilogic FLEX (.pdf). Si viene como reporte de servicios "
-             "(ELDOM_SERVICIOS_DE_<Mes>_<Año>.xlsx), cargá el total FLEX de otra forma / avisá.")
+        "Distrilogic – Factura (.pdf) o Servicios (.xlsx)", type=["pdf", "xlsx"], key="flexf",
+        help="Factura de Distrilogic FLEX (.pdf), o el reporte ELDOM_SERVICIOS_DE_<Mes>_<Año>.xlsx "
+             "(calcula envíos + almacenaje pallet, ambos ×1,22).")
 
 st.divider()
 st.subheader("🏬 Canal físico (tienda)")
@@ -779,8 +818,12 @@ if st.button("⚙️  Procesar", type="primary", use_container_width=True):
             st.write(f"**DAC:** facturación ${r['dac']['total']:,.2f} − bonificación "
                      f"${r['dacnc']['total']:,.2f} = neto ${r['dac_neto']:,.2f}  ·  "
                      f"salida ventas ${r['dac']['salida']:,.2f} / proveedores ${r['dac']['entrada']:,.2f}")
+            _flex_extra = ""
+            if flex.get("pallet"):
+                _flex_extra = (f"  ·  envíos ${flex['envios']:,.2f} + almacenaje pallet "
+                               f"${flex['pallet']:,.2f} (netos, ×1,22)")
             st.write(f"**FLEX Distrilogic:** ${r['flex']:,.2f} con IVA "
-                     f"(neto ${flex['neto']:,.2f})")
+                     f"(neto ${flex['neto']:,.2f}){_flex_extra}")
             if fis is not None:
                 st.write(f"**Canal físico:** venta ${fis['total_venta']:,.2f} · "
                          f"costo ${fis['total_costo']:,.2f} · cobranza ${fis['total_cobranza']:,.2f} · "
