@@ -190,7 +190,8 @@ def parse_flex(f):
 # ---------------------------------------------------------------------------
 # Cálculo del estado de resultados
 # ---------------------------------------------------------------------------
-def compute(ml, cost_fac, cost_nc, dac, dacnc, flex, impuestos=0.0):
+def compute(ml, cost_fac, cost_nc, dac, dacnc, flex,
+            impuestos=0.0, base_sin_iva=True, coef_irae=0.0181, iva_a_pagar=0.0):
     venta_bruta, venta_dev = cost_fac[1], cost_nc[1]
     costo_bruto, costo_dev = cost_fac[0], cost_nc[0]
     venta_neta = round(venta_bruta + venta_dev, 2)
@@ -204,16 +205,26 @@ def compute(ml, cost_fac, cost_nc, dac, dacnc, flex, impuestos=0.0):
     dac_neto = round(dac["total"] - dacnc["total"], 2)          # con IVA
     envios = round(ml["envios"] + dac_neto + flex["total"], 2)
 
-    rno = round(gb - cargos_ml - envios, 2)
-    final = round(rno - impuestos, 2)
+    rno = round(gb - cargos_ml - envios, 2)                     # operativa con IVA
     margen = (rno / venta_neta) if venta_neta else 0.0
+
+    # Cierre económico: base sin IVA (÷1,22) + IRAE por ficto
+    venta_siva = round(venta_neta / (1 + IVA_RATE), 2)
+    if base_sin_iva:
+        rno_base = round(rno / (1 + IVA_RATE), 2)
+    else:
+        rno_base = rno
+    irae = round(venta_siva * coef_irae, 2)
+    final = round(rno_base - irae - iva_a_pagar - impuestos, 2)
 
     return dict(
         venta_bruta=venta_bruta, venta_dev=venta_dev, venta_neta=venta_neta,
         costo_bruto=costo_bruto, costo_dev=costo_dev, costo_neto=costo_neto,
         gb=gb, cargos_ml=cargos_ml, dac_neto=dac_neto, flex=flex["total"],
-        me2=ml["envios"], envios=envios, rno=rno, final=final, margen=margen, ml=ml,
+        me2=ml["envios"], envios=envios, rno=rno, margen=margen, ml=ml,
         dac=dac, dacnc=dacnc,
+        venta_siva=venta_siva, rno_base=rno_base, irae=irae,
+        iva_a_pagar=iva_a_pagar, final=final,
     )
 
 
@@ -283,10 +294,12 @@ def build_excel(r):
     line("ME1 / DAC (neto cta.cte., con IVA)", -r["dac_neto"], BLUE)
     line("FLEX / Distrilogic (con IVA)", -r["flex"], BLUE)
     line("Subtotal envíos", -r["envios"], BOLD, bd=top); blank()
-    line("RENTA NETA OPERATIVA (antes de imp.)", r["rno"], BOLDW, MONEY, CRIMSON)
-    line("Margen neto operativo", r["margen"], BLACK, PCT); blank()
-    hdr("IMPUESTOS")
-    line("Impuestos (IVA neto DGI / IRAE)", -(r["final"] and (r["rno"] - r["final"]) or 0), BLUE)
+    line("RENTA NETA OPERATIVA (con IVA)", r["rno"], BOLDW, MONEY, CRIMSON)
+    line("Margen operativo", r["margen"], BLACK, PCT); blank()
+    hdr("CIERRE ECONÓMICO (base sin IVA + IRAE)")
+    line("Renta operativa base sin IVA", r["rno_base"], BOLD)
+    line("(–) IRAE atribuible ML", -r["irae"], BLUE)
+    line("(–) IVA neto a pagar DGI", -r["iva_a_pagar"], BLUE)
     line("RENTA NETA FINAL", r["final"], BOLDW, MONEY, CRIMSON, bd=dbl)
 
     bio = io.BytesIO(); wb.save(bio); bio.seek(0)
@@ -326,10 +339,20 @@ with c2:
     flex_f = st.file_uploader("Distrilogic – Factura (.pdf)", type=["pdf"], key="flexf")
 
 st.divider()
-impuestos = st.number_input(
-    "Impuestos a descontar (IVA neto DGI / IRAE) — opcional",
-    min_value=0.0, value=0.0, step=1000.0, format="%.2f",
-    help="Dejalo en 0 para ver la renta neta operativa. Cargá el IVA neto / IRAE del mes para la renta neta final.")
+st.subheader("Cierre de impuestos")
+ci1, ci2, ci3 = st.columns(3)
+with ci1:
+    base_sin_iva = st.checkbox(
+        "Llevar a base sin IVA (÷1,22)", value=True,
+        help="Costo y venta están cargados con IVA. El IVA es pass-through; se elimina dividiendo por 1,22.")
+with ci2:
+    coef_irae = st.number_input(
+        "Coeficiente IRAE (ficto)", min_value=0.0, value=0.0181, step=0.0001, format="%.4f",
+        help="Del reporte del contador. IRAE = ventas sin IVA × coeficiente.")
+with ci3:
+    iva_a_pagar = st.number_input(
+        "IVA neto a pagar DGI", min_value=0.0, value=0.0, step=1000.0, format="%.2f",
+        help="Según el contador. Si tenés crédito acumulado, es 0.")
 
 if st.button("⚙️  Procesar", type="primary", use_container_width=True):
     try:
@@ -339,18 +362,19 @@ if st.button("⚙️  Procesar", type="primary", use_container_width=True):
         dac = parse_dac_fact(dac_f)
         dacnc = parse_dac_nc(dac_n)
         flex = parse_flex(flex_f)
-        r = compute(ml, cost_fac, cost_nc, dac, dacnc, flex, impuestos)
+        r = compute(ml, cost_fac, cost_nc, dac, dacnc, flex,
+                    base_sin_iva=base_sin_iva, coef_irae=coef_irae, iva_a_pagar=iva_a_pagar)
 
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Ventas netas", f"$ {r['venta_neta']:,.0f}")
-        m2.metric("Ganancia bruta", f"$ {r['gb']:,.0f}")
-        m3.metric("Renta neta operativa", f"$ {r['rno']:,.0f}", f"{r['margen']*100:.1f}% s/ventas")
+        m1.metric("Ganancia bruta (c/IVA)", f"$ {r['gb']:,.0f}")
+        m2.metric("Renta operativa (c/IVA)", f"$ {r['rno']:,.0f}", f"{r['margen']*100:.1f}% s/ventas")
+        m3.metric("IRAE atribuible ML", f"$ {r['irae']:,.0f}")
         m4.metric("Renta neta FINAL", f"$ {r['final']:,.0f}")
 
         tabla = pd.DataFrame([
-            ("Ventas netas", r["venta_neta"]),
+            ("Ventas netas (con IVA)", r["venta_neta"]),
             ("Costo neto de mercadería", -abs(r["costo_neto"])),
-            ("= Ganancia bruta", r["gb"]),
+            ("= Ganancia bruta (con IVA)", r["gb"]),
             ("Comisión ML (neta)", -r["ml"]["comision"]),
             ("Publicidad Product Ads", -r["ml"]["prodads"]),
             ("Publicidad Display Ads", -r["ml"]["dispads"]),
@@ -360,8 +384,10 @@ if st.button("⚙️  Procesar", type="primary", use_container_width=True):
             ("Envío ME2 / Colecta (ML)", -r["me2"]),
             ("Envío ME1 / DAC (neto)", -r["dac_neto"]),
             ("Envío FLEX / Distrilogic", -r["flex"]),
-            ("= Renta neta operativa", r["rno"]),
-            ("(–) Impuestos", -(r["rno"] - r["final"])),
+            ("= Renta operativa (con IVA)", r["rno"]),
+            ("Renta operativa base sin IVA (÷1,22)", r["rno_base"]),
+            ("(–) IRAE atribuible ML", -r["irae"]),
+            ("(–) IVA neto a pagar DGI", -r["iva_a_pagar"]),
             ("= RENTA NETA FINAL", r["final"]),
         ], columns=["Concepto", "UYU"])
         st.dataframe(
