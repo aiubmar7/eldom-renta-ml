@@ -549,6 +549,21 @@ st.set_page_config(page_title="Renta Neta ML — ELDOM", page_icon="📊", layou
 st.title("📊 Renta Neta MercadoLibre + Canal Físico")
 st.caption("ELDOM EL BAZAR / DELERAL S.A. — cierre mensual. Subí cada reporte y presioná Procesar.")
 
+# ---- Estilos de marca (colores casilleros / botón / títulos) ----
+st.markdown("""
+<style>
+h2, h3 { color:#7B1E22 !important; }
+[data-testid="stFileUploaderDropzone"]{
+  background:#FBF6F2; border:1.6px dashed #7B1E22; border-radius:12px;
+}
+[data-testid="stFileUploaderDropzone"]:hover{ background:#F3E4DD; border-color:#651519; }
+div.stButton > button[kind="primary"]{
+  background:#7B1E22; color:#fff; border:0; font-weight:700; border-radius:10px;
+}
+div.stButton > button[kind="primary"]:hover{ background:#651519; color:#fff; }
+</style>
+""", unsafe_allow_html=True)
+
 with st.expander("¿Qué archivo va en cada casillero?"):
     st.markdown("""
 **MercadoLibre**
@@ -568,27 +583,50 @@ Podés subir solo los que tengas; lo que falte queda en cero. El canal físico n
 c1, c2 = st.columns(2)
 with c1:
     st.subheader("MercadoLibre")
-    ml_fac = st.file_uploader("Facturación ML (.xlsx)", type=["xlsx"], key="mlf")
-    ml_nc = st.file_uploader("Notas de Crédito ML (.xlsx)", type=["xlsx"], key="mln")
+    ml_fac = st.file_uploader(
+        "Facturación ML (.xlsx)", type=["xlsx"], key="mlf",
+        help="Buscá el archivo:  Reporte_Facturacion_MercadoLibre_<Mes><Año>.xlsx"
+             "  ·  ej: Reporte_Facturacion_MercadoLibre_Jun2026.xlsx")
+    ml_nc = st.file_uploader(
+        "Notas de Crédito ML (.xlsx)", type=["xlsx"], key="mln",
+        help="Buscá el archivo:  Reporte_Notas_Credito_MercadoLibre_<Mes><Año>.xlsx"
+             "  ·  ej: Reporte_Notas_Credito_MercadoLibre_Jun2026.xlsx")
     st.subheader("Costeo FacturApp (M LIBRE)")
-    co_fac = st.file_uploader("Costeo – Facturas (.pdf)", type=["pdf"], key="cof")
-    co_nc = st.file_uploader("Costeo – Notas de Crédito (.pdf)", type=["pdf"], key="con")
+    co_fac = st.file_uploader(
+        "Costeo – Facturas (.pdf)", type=["pdf"], key="cof",
+        help="Reporte de costeo de FacturApp FILTRADO a medio de pago M LIBRE — Facturas (.pdf)")
+    co_nc = st.file_uploader(
+        "Costeo – Notas de Crédito (.pdf)", type=["pdf"], key="con",
+        help="Reporte de costeo de FacturApp FILTRADO a M LIBRE — Notas de Crédito / Devoluciones (.pdf)")
 with c2:
     st.subheader("Flete DAC (ME1)")
-    dac_f = st.file_uploader("DAC – Facturación mensual (.pdf)", type=["pdf"], key="dacf")
-    dac_n = st.file_uploader("DAC – Nota de Crédito / bonificación (.pdf)", type=["pdf"], key="dacn")
+    dac_f = st.file_uploader(
+        "DAC – Facturación mensual (.pdf)", type=["pdf"], key="dacf",
+        help="Buscá el archivo:  Facturacion_Mensual-INV_<número>.pdf  (reporte de facturación mensual de DAC)")
+    dac_n = st.file_uploader(
+        "DAC – Nota de Crédito / bonificación (.pdf)", type=["pdf"], key="dacn",
+        help="Buscá el archivo:  Factura-NC_<número>.pdf  (nota de crédito / bonificación mensual de DAC)")
     st.subheader("Logística FLEX")
-    flex_f = st.file_uploader("Distrilogic – Factura (.pdf)", type=["pdf"], key="flexf")
+    flex_f = st.file_uploader(
+        "Distrilogic – Factura (.pdf)", type=["pdf"], key="flexf",
+        help="Factura de Distrilogic FLEX (.pdf). Si viene como reporte de servicios "
+             "(ELDOM_SERVICIOS_DE_<Mes>_<Año>.xlsx), cargá el total FLEX de otra forma / avisá.")
 
 st.divider()
 st.subheader("🏬 Canal físico (tienda)")
 cf1, cf2, cf3 = st.columns(3)
 with cf1:
-    fis_costeo = st.file_uploader("Costeo – TODOS los métodos (.pdf)", type=["pdf"], key="fisc")
+    fis_costeo = st.file_uploader(
+        "Costeo – TODOS los métodos (.pdf)", type=["pdf"], key="fisc",
+        help="Buscá el archivo:  total_<mes>_<año>_todos_metodos_de_pago_Reporte_de_costeo.pdf")
 with cf2:
-    fis_venta = st.file_uploader("Ventas – Medios de pago (.pdf)", type=["pdf"], key="fisv")
+    fis_venta = st.file_uploader(
+        "Ventas – Medios de pago (.pdf)", type=["pdf"], key="fisv",
+        help="Buscá el archivo:  venta_total_<mes>_<año>.pdf  (listado de ventas con forma de pago)")
 with cf3:
-    fis_nc = st.file_uploader("NC – Medios de pago (.pdf, opcional)", type=["pdf"], key="fisn")
+    fis_nc = st.file_uploader(
+        "NC – Medios de pago (.pdf, opcional)", type=["pdf"], key="fisn",
+        help="Buscá el archivo:  NC_total_<mes>_<año>.pdf  (devoluciones con forma de pago)")
 
 st.divider()
 st.subheader("Cierre de impuestos (solo aplica al bloque ML)")
@@ -608,24 +646,25 @@ with ci3:
 
 if st.button("⚙️  Procesar", type="primary", use_container_width=True):
     try:
-        ml = parse_ml_charges(ml_fac, ml_nc)
-        cost_fac = parse_costeo_pdf(co_fac)
-        cost_nc = parse_costeo_pdf(co_nc)
-        dac = parse_dac_fact(dac_f)
-        dacnc = parse_dac_nc(dac_n)
-        flex = parse_flex(flex_f)
-        r = compute(ml, cost_fac, cost_nc, dac, dacnc, flex,
-                    base_sin_iva=base_sin_iva, coef_irae=coef_irae, iva_a_pagar=iva_a_pagar)
+        with st.spinner("⚙️  Procesando reportes… un momento"):
+            ml = parse_ml_charges(ml_fac, ml_nc)
+            cost_fac = parse_costeo_pdf(co_fac)
+            cost_nc = parse_costeo_pdf(co_nc)
+            dac = parse_dac_fact(dac_f)
+            dacnc = parse_dac_nc(dac_n)
+            flex = parse_flex(flex_f)
+            r = compute(ml, cost_fac, cost_nc, dac, dacnc, flex,
+                        base_sin_iva=base_sin_iva, coef_irae=coef_irae, iva_a_pagar=iva_a_pagar)
 
-        # ---- Canal físico ----
-        costeo_det = parse_costeo_detalle(fis_costeo)
-        ventas_fp = parse_ventas_formapago(fis_venta)
-        nc_fis = parse_nc_formapago(fis_nc)
-        fis = None
-        op_total = None
-        if costeo_det and ventas_fp:
-            fis = compute_fisico(costeo_det, ventas_fp, nc_fis)
-            op_total = round(r["rno"] + fis["operativa"], 2)
+            # ---- Canal físico ----
+            costeo_det = parse_costeo_detalle(fis_costeo)
+            ventas_fp = parse_ventas_formapago(fis_venta)
+            nc_fis = parse_nc_formapago(fis_nc)
+            fis = None
+            op_total = None
+            if costeo_det and ventas_fp:
+                fis = compute_fisico(costeo_det, ventas_fp, nc_fis)
+                op_total = round(r["rno"] + fis["operativa"], 2)
 
         warns = []
         if dacnc["total"] > 0 and dac["total"] == 0:
