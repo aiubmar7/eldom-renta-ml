@@ -32,6 +32,7 @@ Deploy: Streamlit Community Cloud o Render. Solo requiere renta_neta_ml.py + req
 
 import io
 import re
+import html
 import pandas as pd
 import pdfplumber
 import streamlit as st
@@ -582,6 +583,37 @@ def build_excel(r, fis=None, op_total=None):
 
 
 # ---------------------------------------------------------------------------
+# Feedback de carga de archivos (color + barra "carga completa")
+# ---------------------------------------------------------------------------
+def _fmt_size(n):
+    """Tamaño legible: 812 KB, 3.4 MB, etc."""
+    n = float(n or 0)
+    for u in ("B", "KB", "MB", "GB"):
+        if n < 1024:
+            return (f"{n:.0f} {u}" if u == "B" else f"{n:.1f} {u}")
+        n /= 1024
+    return f"{n:.1f} TB"
+
+
+def _upload_ok(f, key):
+    """Cuando ya hay archivo en el casillero: pinta el casillero de verde y
+    dibuja debajo una barra de 'carga completa' con el nombre y el tamaño.
+    (La barra de subida en tiempo real la maneja Streamlit; esto confirma el fin.)"""
+    if f is None:
+        return
+    name = html.escape(getattr(f, "name", "archivo"))
+    size = _fmt_size(getattr(f, "size", 0))
+    # Refuerzo por si el navegador no aplica el :has() global: pinta este casillero por su key.
+    css = ("<style>.st-key-%s [data-testid=\"stFileUploaderDropzone\"]"
+           "{background:#E9F5EC !important;border:1.6px solid #2E7D32 !important;}"
+           "</style>") % key
+    bar = ("<div class='upok'><div class='upok-bar'><span></span></div>"
+           "<div class='upok-txt'>\u2705 %s \u00b7 %s \u00b7 carga completa</div></div>"
+           % (name, size))
+    st.markdown(css + bar, unsafe_allow_html=True)
+
+
+# ---------------------------------------------------------------------------
 # Interfaz
 # ---------------------------------------------------------------------------
 st.set_page_config(page_title="Renta Neta ML — ELDOM", page_icon="📊", layout="wide")
@@ -600,6 +632,22 @@ div.stButton > button[kind="primary"]{
   background:#7B1E22; color:#fff; border:0; font-weight:700; border-radius:10px;
 }
 div.stButton > button[kind="primary"]:hover{ background:#651519; color:#fff; }
+
+/* Casillero con archivo cargado -> fondo verde (CSS puro, sin depender de Python) */
+[data-testid="stFileUploader"]:has([data-testid="stFileUploaderDeleteBtn"]) [data-testid="stFileUploaderDropzone"],
+[data-testid="stFileUploader"]:has([data-testid="stFileUploaderFile"]) [data-testid="stFileUploaderDropzone"],
+[data-testid="stFileUploader"]:has([data-testid="stFileUploaderFileName"]) [data-testid="stFileUploaderDropzone"]{
+  background:#E9F5EC !important; border:1.6px solid #2E7D32 !important;
+}
+
+/* Barra "carga completa" que se dibuja debajo del casillero cuando el archivo ya está en el servidor */
+.upok{ margin:-4px 0 12px 2px; }
+.upok-bar{ height:7px; background:#D9EADE; border-radius:5px; overflow:hidden; }
+.upok-bar > span{ display:block; height:100%; width:100%; background:#2E7D32;
+  border-radius:5px; transform-origin:left; animation:upfill .6s ease-out; }
+@keyframes upfill{ from{ transform:scaleX(0); } to{ transform:scaleX(1); } }
+.upok-txt{ font-size:12px; font-weight:700; color:#2E7D32; margin-top:4px;
+  display:flex; align-items:center; gap:6px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -626,30 +674,37 @@ with c1:
         "Facturación ML (.xlsx)", type=["xlsx"], key="mlf",
         help="Buscá el archivo:  Reporte_Facturacion_MercadoLibre_<Mes><Año>.xlsx"
              "  ·  ej: Reporte_Facturacion_MercadoLibre_Jun2026.xlsx")
+    _upload_ok(ml_fac, "mlf")
     ml_nc = st.file_uploader(
         "Notas de Crédito ML (.xlsx)", type=["xlsx"], key="mln",
         help="Buscá el archivo:  Reporte_Notas_Credito_MercadoLibre_<Mes><Año>.xlsx"
              "  ·  ej: Reporte_Notas_Credito_MercadoLibre_Jun2026.xlsx")
+    _upload_ok(ml_nc, "mln")
     st.subheader("Costeo FacturApp (M LIBRE)")
     co_fac = st.file_uploader(
         "Costeo – Facturas (.pdf)", type=["pdf"], key="cof",
         help="Reporte de costeo de FacturApp FILTRADO a medio de pago M LIBRE — Facturas (.pdf)")
+    _upload_ok(co_fac, "cof")
     co_nc = st.file_uploader(
         "Costeo – Notas de Crédito (.pdf)", type=["pdf"], key="con",
         help="Reporte de costeo de FacturApp FILTRADO a M LIBRE — Notas de Crédito / Devoluciones (.pdf)")
+    _upload_ok(co_nc, "con")
 with c2:
     st.subheader("Flete DAC (ME1)")
     dac_f = st.file_uploader(
         "DAC – Facturación mensual (.pdf)", type=["pdf"], key="dacf",
         help="Buscá el archivo:  Facturacion_Mensual-INV_<número>.pdf  (reporte de facturación mensual de DAC)")
+    _upload_ok(dac_f, "dacf")
     dac_n = st.file_uploader(
         "DAC – Nota de Crédito / bonificación (.pdf)", type=["pdf"], key="dacn",
         help="Buscá el archivo:  Factura-NC_<número>.pdf  (nota de crédito / bonificación mensual de DAC)")
+    _upload_ok(dac_n, "dacn")
     st.subheader("Logística FLEX")
     flex_f = st.file_uploader(
         "Distrilogic – Factura (.pdf) o Servicios (.xlsx)", type=["pdf", "xlsx"], key="flexf",
         help="Factura de Distrilogic FLEX (.pdf), o el reporte ELDOM_SERVICIOS_DE_<Mes>_<Año>.xlsx "
              "(calcula envíos + almacenaje pallet, ambos ×1,22).")
+    _upload_ok(flex_f, "flexf")
 
 st.divider()
 st.subheader("🏬 Canal físico (tienda)")
@@ -658,14 +713,17 @@ with cf1:
     fis_costeo = st.file_uploader(
         "Costeo – TODOS los métodos (.pdf)", type=["pdf"], key="fisc",
         help="Buscá el archivo:  total_<mes>_<año>_todos_metodos_de_pago_Reporte_de_costeo.pdf")
+    _upload_ok(fis_costeo, "fisc")
 with cf2:
     fis_venta = st.file_uploader(
         "Ventas – Medios de pago (.pdf)", type=["pdf"], key="fisv",
         help="Buscá el archivo:  venta_total_<mes>_<año>.pdf  (listado de ventas con forma de pago)")
+    _upload_ok(fis_venta, "fisv")
 with cf3:
     fis_nc = st.file_uploader(
         "NC – Medios de pago (.pdf, opcional)", type=["pdf"], key="fisn",
         help="Buscá el archivo:  NC_total_<mes>_<año>.pdf  (devoluciones con forma de pago)")
+    _upload_ok(fis_nc, "fisn")
 
 st.divider()
 st.subheader("Cierre de impuestos (solo aplica al bloque ML)")
