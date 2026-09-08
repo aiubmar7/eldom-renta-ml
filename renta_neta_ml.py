@@ -48,7 +48,7 @@ IVA_RATE = 0.22
 #  Regla vigente: todo 8,36% (crédito) salvo Débito (1,35%), EFECTIVO y TR BROU (0%).
 #  M LIBRE se excluye siempre (es el canal ML, no físico).
 # ===========================================================================
-TASAS_FIS = {"debito": 0.0135, "credito": 0.0836, "efectivo": 0.0, "transferencia": 0.0}
+TASAS_FIS = {"debito": 0.0135, "credito": 0.0836, "credito_casa": 0.084, "efectivo": 0.0, "transferencia": 0.0}
 
 MAPEO_FIS = {
     "Debito":             "debito",         # 1,35%
@@ -63,8 +63,8 @@ MAPEO_FIS = {
     "CREDITEL":           "credito",
     "CREDITOS DIRECTOS":  "credito",
     "PASS CARD":          "credito",
-    "M PAGO":             "credito",
-    "CREDITO DE LA CASA": "credito",
+    "M PAGO":             "credito_casa",   # 8,4%
+    "CREDITO DE LA CASA": "credito_casa",   # 8,4%
 }
 TASA_DEFECTO_FIS = "credito"   # cualquier forma de pago no listada -> 8,36%
 
@@ -389,8 +389,7 @@ def compute_fisico(costeo_det, ventas_fp, nc_fis):
 # ---------------------------------------------------------------------------
 # Cálculo del estado de resultados (BLOQUE ML)
 # ---------------------------------------------------------------------------
-def compute(ml, cost_fac, cost_nc, dac, dacnc, flex,
-            impuestos=0.0, base_sin_iva=True, coef_irae=0.0181, iva_a_pagar=0.0):
+def compute(ml, cost_fac, cost_nc, dac, dacnc, flex):
     venta_bruta, venta_dev = cost_fac[1], cost_nc[1]
     costo_bruto, costo_dev = cost_fac[0], cost_nc[0]
     venta_neta = round(venta_bruta + venta_dev, 2)
@@ -407,23 +406,12 @@ def compute(ml, cost_fac, cost_nc, dac, dacnc, flex,
     rno = round(gb - cargos_ml - envios, 2)                     # operativa con IVA
     margen = (rno / venta_neta) if venta_neta else 0.0
 
-    # Cierre económico: base sin IVA (÷1,22) + IRAE por ficto
-    venta_siva = round(venta_neta / (1 + IVA_RATE), 2)
-    if base_sin_iva:
-        rno_base = round(rno / (1 + IVA_RATE), 2)
-    else:
-        rno_base = rno
-    irae = round(venta_siva * coef_irae, 2)
-    final = round(rno_base - irae - iva_a_pagar - impuestos, 2)
-
     return dict(
         venta_bruta=venta_bruta, venta_dev=venta_dev, venta_neta=venta_neta,
         costo_bruto=costo_bruto, costo_dev=costo_dev, costo_neto=costo_neto,
         gb=gb, cargos_ml=cargos_ml, dac_neto=dac_neto, flex=flex["total"],
         me2=ml["envios"], envios=envios, rno=rno, margen=margen, ml=ml,
         dac=dac, dacnc=dacnc,
-        venta_siva=venta_siva, rno_base=rno_base, irae=irae,
-        iva_a_pagar=iva_a_pagar, final=final,
     )
 
 
@@ -496,13 +484,8 @@ def build_excel(r, fis=None, op_total=None):
     line("ME1 / DAC (neto cta.cte., con IVA)", -r["dac_neto"], BLUE)
     line("FLEX / Distrilogic (con IVA)", -r["flex"], BLUE)
     line("Subtotal envíos", -r["envios"], BOLD, bd=top); blank()
-    line("RENTA NETA OPERATIVA (con IVA)", r["rno"], BOLDW, MONEY, CRIMSON)
-    line("Margen operativo", r["margen"], BLACK, PCT); blank()
-    hdr("CIERRE ECONÓMICO (base sin IVA + IRAE)")
-    line("Renta operativa base sin IVA", r["rno_base"], BOLD)
-    line("(–) IRAE atribuible ML", -r["irae"], BLUE)
-    line("(–) IVA neto a pagar DGI", -r["iva_a_pagar"], BLUE)
-    line("RENTA NETA FINAL", r["final"], BOLDW, MONEY, CRIMSON, bd=dbl)
+    line("RENTA NETA OPERATIVA (con IVA)", r["rno"], BOLDW, MONEY, CRIMSON, bd=dbl)
+    line("Margen operativo", r["margen"], BLACK, PCT)
 
     # ---------------- Hoja Canal físico + consolidado ----------------
     if fis is not None:
@@ -726,20 +709,6 @@ with cf3:
     _upload_ok(fis_nc, "fisn")
 
 st.divider()
-st.subheader("Cierre de impuestos (solo aplica al bloque ML)")
-ci1, ci2, ci3 = st.columns(3)
-with ci1:
-    base_sin_iva = st.checkbox(
-        "Llevar a base sin IVA (÷1,22)", value=True,
-        help="Costo y venta están cargados con IVA. El IVA es pass-through; se elimina dividiendo por 1,22.")
-with ci2:
-    coef_irae = st.number_input(
-        "Coeficiente IRAE (ficto)", min_value=0.0, value=0.0181, step=0.0001, format="%.4f",
-        help="Del reporte del contador. IRAE = ventas sin IVA × coeficiente.")
-with ci3:
-    iva_a_pagar = st.number_input(
-        "IVA neto a pagar DGI", min_value=0.0, value=0.0, step=1000.0, format="%.2f",
-        help="Según el contador. Si tenés crédito acumulado, es 0.")
 
 if st.button("⚙️  Procesar", type="primary", use_container_width=True):
     try:
@@ -750,8 +719,7 @@ if st.button("⚙️  Procesar", type="primary", use_container_width=True):
             dac = parse_dac_fact(dac_f)
             dacnc = parse_dac_nc(dac_n)
             flex = parse_flex(flex_f)
-            r = compute(ml, cost_fac, cost_nc, dac, dacnc, flex,
-                        base_sin_iva=base_sin_iva, coef_irae=coef_irae, iva_a_pagar=iva_a_pagar)
+            r = compute(ml, cost_fac, cost_nc, dac, dacnc, flex)
 
             # ---- Canal físico ----
             costeo_det = parse_costeo_detalle(fis_costeo)
@@ -790,17 +758,17 @@ if st.button("⚙️  Procesar", type="primary", use_container_width=True):
         if fis is not None:
             f_tot_m = fis.get("facturacion_total", 0.0) or 0.0
             pct_tot = (op_total / f_tot_m) if f_tot_m else 0.0
-            m1, m2, m3, m4 = st.columns(4)
+            m1, m2, m3 = st.columns(3)
             m1.metric("Operativa ML (c/IVA)", f"$ {r['rno']:,.0f}", f"{r['margen']*100:.1f}% s/ventas")
             m2.metric("Operativa física (c/IVA)", f"$ {fis['operativa']:,.0f}")
             m3.metric("OPERATIVA TOTAL", f"$ {op_total:,.0f}", f"{pct_tot*100:.2f}% s/facturación")
-            m4.metric("Renta neta FINAL ML", f"$ {r['final']:,.0f}")
         else:
             m1, m2, m3, m4 = st.columns(4)
-            m1.metric("Ganancia bruta (c/IVA)", f"$ {r['gb']:,.0f}")
-            m2.metric("Renta operativa (c/IVA)", f"$ {r['rno']:,.0f}", f"{r['margen']*100:.1f}% s/ventas")
-            m3.metric("IRAE atribuible ML", f"$ {r['irae']:,.0f}")
-            m4.metric("Renta neta FINAL", f"$ {r['final']:,.0f}")
+            m1.metric("Ventas netas (c/IVA)", f"$ {r['venta_neta']:,.0f}")
+            m2.metric("Ganancia bruta (c/IVA)", f"$ {r['gb']:,.0f}",
+                      f"{(r['gb']/r['venta_neta']*100) if r['venta_neta'] else 0:.1f}%")
+            m3.metric("Cargos + envíos ML", f"$ {r['cargos_ml'] + r['envios']:,.0f}")
+            m4.metric("Renta operativa (c/IVA)", f"$ {r['rno']:,.0f}", f"{r['margen']*100:.1f}% s/ventas")
 
         # -------- Estado de resultados ML --------
         st.markdown("#### MercadoLibre — estado de resultados")
@@ -818,10 +786,6 @@ if st.button("⚙️  Procesar", type="primary", use_container_width=True):
             ("Envío ME1 / DAC (neto)", -r["dac_neto"]),
             ("Envío FLEX / Distrilogic", -r["flex"]),
             ("= Renta operativa (con IVA)", r["rno"]),
-            ("Renta operativa base sin IVA (÷1,22)", r["rno_base"]),
-            ("(–) IRAE atribuible ML", -r["irae"]),
-            ("(–) IVA neto a pagar DGI", -r["iva_a_pagar"]),
-            ("= RENTA NETA FINAL", r["final"]),
         ], columns=["Concepto", "UYU"])
         st.dataframe(
             tabla.style.format({"UYU": "{:,.2f}"}),
